@@ -1,241 +1,88 @@
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <title>Actualizar Tipo de Cambio</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 720px; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    label { display:block; font-weight: 600; margin-top: 8px; }
-    input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; font-size: 16px; }
-    button { padding: 10px 14px; border: 1px solid #333; background: #111; color: #fff; border-radius: 6px; cursor: pointer; }
-    button.secondary { background: #fff; color: #111; margin-left: 8px; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .muted { color:#666; font-size: 12px; }
-    .right { text-align: right; }
-    .error { color: #b00020; margin-top: 8px; }
-    .ok { color: #0a7a24; margin-top: 8px; }
-  </style>
-</head>
-<body>
-  <h1>Actualizar tipo de cambio</h1>
-  <p class="muted">
-    JSON en <code>public.exchange_rates.rates</code> (id=1): 
-    <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code>
-  </p>
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-  <div id="auth" class="card">
-    <h2>Acceso</h2>
-    <div id="signed-out">
-      <label>Email</label>
-      <input id="email" type="email" placeholder="admin@tudominio.com" />
-      <label>Contraseña</label>
-      <input id="password" type="password" placeholder="••••••••" />
-      <div style="margin-top:12px;">
-        <button id="login">Iniciar sesión</button>
-        <button id="signup" class="secondary">Crear usuario</button>
-      </div>
-      <div id="auth-msg" class="error"></div>
-    </div>
-    <div id="signed-in" style="display:none;">
-      <div>Sesión iniciada: <span id="user-email"></span></div>
-      <div class="right"><button id="logout" class="secondary">Cerrar sesión</button></div>
-    </div>
-  </div>
+const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
 
-  <div id="form" class="card" style="display:none;">
-    <h2>Valores actuales</h2>
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    <div class="row">
-      <div>
-        <label>Ventanilla low (hasta 800)</label>
-        <input id="ventanilla_low" type="number" step="0.01" />
-      </div>
-      <div>
-        <label>Ventanilla high (801+)</label>
-        <input id="ventanilla_high" type="number" step="0.01" />
-      </div>
-    </div>
+const $ = id => document.getElementById(id);
+const fields = {
+  ventanilla_low: $('ventanilla_low'),
+  ventanilla_high: $('ventanilla_high'),
+  deposito_low: $('deposito_low'),
+  deposito_high: $('deposito_high'),
+  otros: $('otros'),
+  apolonio: $('apolonio'),
+};
+let currentData = null;
 
-    <div class="row">
-      <div>
-        <label>Depósito low</label>
-        <input id="deposito_low" type="number" step="0.01" />
-      </div>
-      <div>
-        <label>Depósito high</label>
-        <input id="deposito_high" type="number" step="0.01" />
-      </div>
-    </div>
+async function loadRates() {
+  const { data, error } = await supabase
+    .from('exchange_rates')
+    .select('rates, updated_at')
+    .eq('id', 1)
+    .single();
+  if (error) { alert(error.message); return; }
+  currentData = data.rates || {};
+  fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
+  fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
+  fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
+  fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
+  fields.otros.value           = currentData?.otros            ?? '';
+  fields.apolonio.value        = currentData?.apolonio         ?? '';
+  $('last-updated').textContent = data.updated_at ? 
+    `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
+}
 
-    <div class="row">
-      <div>
-        <label>Otros</label>
-        <input id="otros" type="number" step="0.01" />
-      </div>
-      <div>
-        <label>Apolonio</label>
-        <input id="apolonio" type="number" step="0.01" />
-      </div>
-    </div>
+const toNumOr = (v, fallback) => v === '' || v == null ? fallback : Number(v);
+function buildJson() {
+  const base = currentData || {};
+  return {
+    otros:     toNumOr(fields.otros.value, base.otros),
+    apolonio:  toNumOr(fields.apolonio.value, base.apolonio),
+    deposito:  { low: toNumOr(fields.deposito_low.value, base?.deposito?.low),
+                 high: toNumOr(fields.deposito_high.value, base?.deposito?.high) },
+    ventanilla:{ low: toNumOr(fields.ventanilla_low.value, base?.ventanilla?.low),
+                 high: toNumOr(fields.ventanilla_high.value, base?.ventanilla?.high) }
+  };
+}
 
-    <div style="margin-top:16px;">
-      <button id="save">Guardar</button>
-      <button id="reload" class="secondary">Recargar</button>
-    </div>
-    <div id="save-msg" class=""></div>
-    <p class="muted" id="last-updated"></p>
-  </div>
+async function saveRates() {
+  const payload = buildJson();
+  const { error } = await supabase
+    .from('exchange_rates')
+    .update({ rates: payload, updated_at: new Date().toISOString() })
+    .eq('id', 1);
+  if (error) alert(error.message);
+  else { alert("¡Actualizado!"); await loadRates(); }
+}
 
-  <!-- Usamos jsdelivr +esm para el import del SDK -->
-  <script type="module">
-    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+$('login').onclick = async () => {
+  const { error } = await supabase.auth.signInWithPassword({
+    email: $('email').value.trim(),
+    password: $('password').value
+  });
+  if (error) alert(error.message);
+};
+$('signup').onclick = async () => {
+  const { error } = await supabase.auth.signUp({
+    email: $('email').value.trim(),
+    password: $('password').value
+  });
+  if (error) alert(error.message);
+  else alert("Revisa tu correo para confirmar.");
+};
+$('logout').onclick = async () => { await supabase.auth.signOut(); location.reload(); };
+$('save').onclick = saveRates;
+$('reload').onclick = loadRates;
 
-    // 🔧 Tus credenciales (las dejé como las pegaste)
-    const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    const $ = (id) => document.getElementById(id);
-    const setMsg = (txt, cls="") => { const el=$('save-msg'); el.className=cls; el.textContent=txt; };
-
-    const fields = {
-      ventanilla_low: $('ventanilla_low'),
-      ventanilla_high: $('ventanilla_high'),
-      deposito_low: $('deposito_low'),
-      deposito_high: $('deposito_high'),
-      otros: $('otros'),
-      apolonio: $('apolonio'),
-    };
-
-    // Guarda el JSON actual para permitir guardados parciales
-    let currentData = null;
-
-    // === LECTURA desde public.exchange_rates (id=1) ===
-    async function loadRates() {
-      setMsg("Cargando…");
-      const { data, error } = await supabase
-        .from('exchange_rates')
-        .select('rates, updated_at')
-        .eq('id', 1)
-        .single();
-
-      if (error) { setMsg('Error cargando datos: ' + error.message, 'error'); return; }
-
-      currentData = data?.rates || {};
-      fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
-      fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
-      fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
-      fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
-      fields.otros.value           = currentData?.otros            ?? '';
-      fields.apolonio.value        = currentData?.apolonio         ?? '';
-
-      $('last-updated').textContent =
-        data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
-      setMsg('');
-    }
-
-    // Convierte string a número; si está vacío, conserva el valor anterior
-    const toNumOr = (str, fallback) => {
-      if (str === '' || str == null) return fallback;
-      const n = Number(str);
-      return Number.isFinite(n) ? n : fallback;
-    };
-
-    // Construye el JSON MERGEANDO con currentData (no obliga a llenar todo)
-    function buildJson() {
-      const base = currentData || {
-        otros: null,
-        apolonio: null,
-        deposito: { low: null, high: null },
-        ventanilla: { low: null, high: null },
-      };
-
-      const payload = {
-        otros:     toNumOr(fields.otros.value,            base.otros),
-        apolonio:  toNumOr(fields.apolonio.value,         base.apolonio),
-        deposito:  {
-          low:  toNumOr(fields.deposito_low.value,        base?.deposito?.low),
-          high: toNumOr(fields.deposito_high.value,       base?.deposito?.high),
-        },
-        ventanilla:{
-          low:  toNumOr(fields.ventanilla_low.value,      base?.ventanilla?.low),
-          high: toNumOr(fields.ventanilla_high.value,     base?.ventanilla?.high),
-        },
-      };
-
-      // Validación suave: que todo termine siendo número
-      if (![payload.deposito.low, payload.deposito.high,
-            payload.ventanilla.low, payload.ventanilla.high,
-            payload.otros, payload.apolonio].every(Number.isFinite)) {
-        return { error: 'Falta al menos un valor numérico requerido en el JSON final.' };
-      }
-      return { data: payload };
-    }
-
-    // === ESCRITURA en public.exchange_rates (id=1) ===
-    async function saveRates() {
-      const built = buildJson();
-      if (built.error) { setMsg(built.error, 'error'); return; }
-
-      setMsg("Guardando…");
-      const { error } = await supabase
-        .from('exchange_rates')
-        .update({
-          rates: built.data,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', 1);
-
-      if (error) setMsg('Error guardando: ' + error.message, 'error');
-      else { setMsg('¡Actualizado correctamente!', 'ok'); await loadRates(); }
-    }
-
-    // === Auth UI ===
-    $('login').onclick = async () => {
-      const email = $('email').value.trim();
-      const password = $('password').value;
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) $('auth-msg').textContent = error.message;
-    };
-
-    $('signup').onclick = async () => {
-      const email = $('email').value.trim();
-      const password = $('password').value;
-      const { error } = await supabase.auth.signUp({ email, password });
-      $('auth-msg').textContent = error ? error.message : 'Revisa tu email para confirmar.';
-    };
-
-    $('logout').onclick = async () => {
-      try { await supabase.auth.signOut(); }
-      finally { location.reload(); } // asegura limpiar la sesión en el cliente
-    };
-
-    $('save').onclick = saveRates;
-    $('reload').onclick = loadRates;
-
-    supabase.auth.onAuthStateChange(async (_event, session) => {
-      const authed = !!session?.user;
-      $('signed-out').style.display = authed ? 'none' : 'block';
-      $('signed-in').style.display  = authed ? 'block' : 'none';
-      $('form').style.display       = authed ? 'block' : 'none';
-      $('user-email').textContent   = session?.user?.email ?? '';
-      if (authed) await loadRates();
-    });
-
-    // Si ya había sesión, carga
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) await loadRates();
-    })();
-
-    // Muestra errores JS en la página (útil para depurar)
-    window.onerror = (msg, src, line, col, err) => {
-      setMsg(`Error: ${msg}`, "error");
-      console.error(msg, src, line, col, err);
-    };
-  </script>
-</body>
-</html>
+supabase.auth.onAuthStateChange(async (_e, s) => {
+  const authed = !!s?.user;
+  $('signed-out').style.display = authed ? 'none' : 'block';
+  $('signed-in').style.display  = authed ? 'block' : 'none';
+  $('form').style.display       = authed ? 'block' : 'none';
+  $('user-email').textContent   = s?.user?.email || '';
+  if (authed) await loadRates();
+});
+</script>
