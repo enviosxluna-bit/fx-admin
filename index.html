@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Actualizar Tipo de Cambio</title>
+  <title>Actualizar tipo de cambio</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 720px; }
@@ -20,7 +20,9 @@
 </head>
 <body>
   <h1>Actualizar tipo de cambio</h1>
-  <p class="muted">Formato fijo: <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
+  <p class="muted">Formato fijo del JSON en <code>exchange_rates.rates</code>:
+    <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code>
+  </p>
 
   <div id="auth" class="card">
     <h2>Acceso</h2>
@@ -87,7 +89,7 @@
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // 🔧 Reemplaza con tus valores
+    // 🔧 Reemplaza con tus valores (o deja los que ya pusiste antes).
     const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
 
@@ -103,18 +105,21 @@
       apolonio: $('apolonio'),
     };
 
+    // === LECTURA desde public.exchange_rates (id=1) ===
     async function loadRates() {
       const { data, error } = await supabase
-        .from('rates_current')
-        .select('data, updated_at, updated_by')
-        .eq('id', 'current')
+        .from('exchange_rates')
+        .select('rates, updated_at')
+        .eq('id', 1)
         .single();
+
       if (error) {
         $('save-msg').className = 'error';
         $('save-msg').textContent = 'Error cargando datos: ' + error.message;
         return;
       }
-      const d = data.data || {};
+
+      const d = data?.rates || {};
       fields.ventanilla_low.value  = d?.ventanilla?.low  ?? '';
       fields.ventanilla_high.value = d?.ventanilla?.high ?? '';
       fields.deposito_low.value    = d?.deposito?.low    ?? '';
@@ -122,13 +127,14 @@
       fields.otros.value           = d?.otros            ?? '';
       fields.apolonio.value        = d?.apolonio         ?? '';
 
-      $('last-updated').textContent = `Última actualización: ${new Date(data.updated_at).toLocaleString()}`;
+      $('last-updated').textContent =
+        data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
       $('save-msg').textContent = '';
       $('save-msg').className = '';
     }
 
+    // Mantener EXACTO el formato del JSON
     function buildJson() {
-      // Mantener EXACTO el formato requerido
       const toNum = (v) => v === '' || v === null ? null : Number(v);
       const payload = {
         otros:     toNum(fields.otros.value),
@@ -136,7 +142,6 @@
         deposito:  { low: toNum(fields.deposito_low.value),  high: toNum(fields.deposito_high.value) },
         ventanilla:{ low: toNum(fields.ventanilla_low.value),high: toNum(fields.ventanilla_high.value) },
       };
-      // Validaciones simples
       for (const [k,v] of Object.entries(payload)) {
         if (k === 'deposito' || k === 'ventanilla') {
           if (v.low == null || v.high == null) return { error:'Faltan valores en ' + k };
@@ -147,6 +152,7 @@
       return { data: payload };
     }
 
+    // === ESCRITURA en public.exchange_rates (id=1) ===
     async function saveRates() {
       const built = buildJson();
       if (built.error) {
@@ -154,26 +160,14 @@
         $('save-msg').textContent = built.error;
         return;
       }
-      const payload = built.data;
 
-      const user = (await supabase.auth.getUser()).data.user;
-      const updated_by = user?.id ?? null;
-
-      // Escribe historial primero
-      const { error: histErr } = await supabase
-        .from('rates_history')
-        .insert({ data: payload, updated_by });
-
-      if (histErr) {
-        $('save-msg').className = 'error';
-        $('save-msg').textContent = 'Error salvando historial: ' + histErr.message;
-        return;
-      }
-
-      // Upsert al registro singleton
       const { error } = await supabase
-        .from('rates_current')
-        .upsert({ id: 'current', data: payload, updated_by });
+        .from('exchange_rates')
+        .update({
+          rates: built.data,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', 1);
 
       if (error) {
         $('save-msg').className = 'error';
@@ -185,7 +179,7 @@
       }
     }
 
-    // --- Auth UI ---
+    // === Auth UI ===
     $('login').onclick = async () => {
       const email = $('email').value.trim();
       const password = $('password').value;
@@ -216,7 +210,7 @@
       if (authed) await loadRates();
     });
 
-    // Intenta cargar por si ya hay sesión
+    // Si ya había sesión, carga
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (data.session) await loadRates();
@@ -224,3 +218,5 @@
   </script>
 </body>
 </html>
+
+
