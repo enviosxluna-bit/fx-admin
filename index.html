@@ -20,7 +20,7 @@
 </head>
 <body>
   <h1>Actualizar tipo de cambio</h1>
-  <p class="muted">Formato fijo: <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
+  <p class="muted">Formato: <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
 
   <div id="auth" class="card">
     <h2>Acceso</h2>
@@ -87,13 +87,15 @@
   <script type="module">
     import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-    // 🔧 Configuración Supabase
+    // 👇 Usa tus credenciales (las mismas que probaste)
     const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const $ = (id) => document.getElementById(id);
+    const setMsg = (txt, cls="") => { const el=$('save-msg'); el.className=cls; el.textContent=txt; };
+
     const fields = {
       ventanilla_low: $('ventanilla_low'),
       ventanilla_high: $('ventanilla_high'),
@@ -103,73 +105,89 @@
       apolonio: $('apolonio'),
     };
 
+    // Mantener en memoria el JSON actual para MERGE
+    let currentData = null;
+
+    // === LECTURA ===
     async function loadRates() {
+      setMsg("Cargando…");
       const { data, error } = await supabase
         .from('exchange_rates')
         .select('rates, updated_at')
         .eq('id', 1)
         .single();
 
-      if (error) {
-        $('save-msg').className = 'error';
-        $('save-msg').textContent = 'Error cargando datos: ' + error.message;
-        return;
-      }
-      const d = data.rates || {};
-      fields.ventanilla_low.value  = d?.ventanilla?.low  ?? '';
-      fields.ventanilla_high.value = d?.ventanilla?.high ?? '';
-      fields.deposito_low.value    = d?.deposito?.low    ?? '';
-      fields.deposito_high.value   = d?.deposito?.high   ?? '';
-      fields.otros.value           = d?.otros            ?? '';
-      fields.apolonio.value        = d?.apolonio         ?? '';
+      if (error) { setMsg('Error cargando: ' + error.message, 'error'); return; }
 
-      $('last-updated').textContent = `Última actualización: ${new Date(data.updated_at).toLocaleString()}`;
-      $('save-msg').textContent = '';
-      $('save-msg').className = '';
+      currentData = data?.rates || {};
+      // Prefill
+      fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
+      fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
+      fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
+      fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
+      fields.otros.value           = currentData?.otros            ?? '';
+      fields.apolonio.value        = currentData?.apolonio         ?? '';
+      $('last-updated').textContent =
+        data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
+      setMsg('');
     }
 
-    function buildJson() {
-      const toNum = (v) => v === '' || v === null ? null : Number(v);
-      const payload = {
-        otros:     toNum(fields.otros.value),
-        apolonio:  toNum(fields.apolonio.value),
-        deposito:  { low: toNum(fields.deposito_low.value),  high: toNum(fields.deposito_high.value) },
-        ventanilla:{ low: toNum(fields.ventanilla_low.value),high: toNum(fields.ventanilla_high.value) },
+    // === Construcción MERGE (no pisa con null) ===
+    const toNumOr = (val, fallback) => {
+      if (val === '' || val === null || val === undefined) return fallback;
+      const n = Number(val);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    function buildMergedJson() {
+      const base = currentData || {
+        otros: null, apolonio: null,
+        deposito: { low: null, high: null },
+        ventanilla: { low: null, high: null }
       };
-      for (const [k,v] of Object.entries(payload)) {
-        if (k === 'deposito' || k === 'ventanilla') {
-          if (v.low == null || v.high == null) return { error:'Faltan valores en ' + k };
-        } else {
-          if (v == null) return { error:'Falta valor en ' + k };
-        }
-      }
-      return { data: payload };
+
+      const merged = {
+        otros:     toNumOr(fields.otros.value, base.otros),
+        apolonio:  toNumOr(fields.apolonio.value, base.apolonio),
+        deposito:  {
+          low:  toNumOr(fields.deposito_low.value,  base?.deposito?.low),
+          high: toNumOr(fields.deposito_high.value, base?.deposito?.high),
+        },
+        ventanilla:{
+          low:  toNumOr(fields.ventanilla_low.value,  base?.ventanilla?.low),
+          high: toNumOr(fields.ventanilla_high.value, base?.ventanilla?.high),
+        },
+      };
+
+      // Validación final: todo debe ser número
+      const all = [
+        merged.otros, merged.apolonio,
+        merged.deposito.low, merged.deposito.high,
+        merged.ventanilla.low, merged.ventanilla.high
+      ];
+      if (!all.every(Number.isFinite)) return { error: 'Hay valores vacíos o no numéricos.' };
+      return { data: merged };
     }
 
+    // === ESCRITURA ===
     async function saveRates() {
-      const built = buildJson();
-      if (built.error) {
-        $('save-msg').className = 'error';
-        $('save-msg').textContent = built.error;
-        return;
-      }
-      const payload = built.data;
+      const built = buildMergedJson();
+      if (built.error) { setMsg(built.error, 'error'); return; }
 
+      setMsg("Guardando…");
       const { error } = await supabase
         .from('exchange_rates')
-        .update({ rates: payload })
+        .update({
+          rates: built.data,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', 1);
 
-      if (error) {
-        $('save-msg').className = 'error';
-        $('save-msg').textContent = 'Error guardando: ' + error.message;
-      } else {
-        $('save-msg').className = 'ok';
-        $('save-msg').textContent = '¡Actualizado correctamente!';
-        await loadRates();
-      }
+      if (error) setMsg('Error guardando: ' + error.message, 'error');
+      else { setMsg('¡Actualizado correctamente!', 'ok'); await loadRates(); }
     }
 
+    // === Auth ===
     $('login').onclick = async () => {
       const email = $('email').value.trim();
       const password = $('password').value;
@@ -185,13 +203,14 @@
     };
 
     $('logout').onclick = async () => {
-      await supabase.auth.signOut();
+      try { await supabase.auth.signOut(); }
+      finally { location.reload(); }
     };
 
     $('save').onclick = saveRates;
     $('reload').onclick = loadRates;
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    supabase.auth.onAuthStateChange(async (_event, session) => {
       const authed = !!session?.user;
       $('signed-out').style.display = authed ? 'none' : 'block';
       $('signed-in').style.display  = authed ? 'block' : 'none';
