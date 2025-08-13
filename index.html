@@ -20,7 +20,7 @@
 </head>
 <body>
   <h1>Actualizar tipo de cambio</h1>
-  <p class="muted">Formato fijo del JSON en <code>exchange_rates.rates</code>:
+  <p class="muted">JSON en <code>public.exchange_rates.rates</code> (id=1):
     <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code>
   </p>
 
@@ -89,7 +89,7 @@
   <script type="module">
     import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-    // 🔧 Reemplaza con tus valores (o deja los que ya pusiste antes).
+    // 🔧 Reemplaza con los tuyos
     const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
 
@@ -105,6 +105,9 @@
       apolonio: $('apolonio'),
     };
 
+    // Guardamos el JSON actual para merges parciales
+    let currentData = null;
+
     // === LECTURA desde public.exchange_rates (id=1) ===
     async function loadRates() {
       const { data, error } = await supabase
@@ -119,13 +122,14 @@
         return;
       }
 
-      const d = data?.rates || {};
-      fields.ventanilla_low.value  = d?.ventanilla?.low  ?? '';
-      fields.ventanilla_high.value = d?.ventanilla?.high ?? '';
-      fields.deposito_low.value    = d?.deposito?.low    ?? '';
-      fields.deposito_high.value   = d?.deposito?.high   ?? '';
-      fields.otros.value           = d?.otros            ?? '';
-      fields.apolonio.value        = d?.apolonio         ?? '';
+      currentData = data?.rates || {};
+      // Prefill (para que no tengas que escribir todo cada vez)
+      fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
+      fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
+      fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
+      fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
+      fields.otros.value           = currentData?.otros            ?? '';
+      fields.apolonio.value        = currentData?.apolonio         ?? '';
 
       $('last-updated').textContent =
         data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
@@ -133,21 +137,40 @@
       $('save-msg').className = '';
     }
 
-    // Mantener EXACTO el formato del JSON
+    // Convierte string a número; si está vacío/NaN, usa fallback
+    const toNumOr = (str, fallback) => {
+      if (str === '' || str === null || str === undefined) return fallback;
+      const n = Number(str);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    // Construye el JSON MERGEANDO con currentData (para no obligarte a llenar todo)
     function buildJson() {
-      const toNum = (v) => v === '' || v === null ? null : Number(v);
-      const payload = {
-        otros:     toNum(fields.otros.value),
-        apolonio:  toNum(fields.apolonio.value),
-        deposito:  { low: toNum(fields.deposito_low.value),  high: toNum(fields.deposito_high.value) },
-        ventanilla:{ low: toNum(fields.ventanilla_low.value),high: toNum(fields.ventanilla_high.value) },
+      const base = currentData || {
+        otros: null,
+        apolonio: null,
+        deposito: { low: null, high: null },
+        ventanilla: { low: null, high: null },
       };
-      for (const [k,v] of Object.entries(payload)) {
-        if (k === 'deposito' || k === 'ventanilla') {
-          if (v.low == null || v.high == null) return { error:'Faltan valores en ' + k };
-        } else {
-          if (v == null) return { error:'Falta valor en ' + k };
-        }
+
+      const payload = {
+        otros:     toNumOr(fields.otros.value,            base.otros),
+        apolonio:  toNumOr(fields.apolonio.value,         base.apolonio),
+        deposito:  {
+          low:  toNumOr(fields.deposito_low.value,        base?.deposito?.low),
+          high: toNumOr(fields.deposito_high.value,       base?.deposito?.high),
+        },
+        ventanilla:{
+          low:  toNumOr(fields.ventanilla_low.value,      base?.ventanilla?.low),
+          high: toNumOr(fields.ventanilla_high.value,     base?.ventanilla?.high),
+        },
+      };
+
+      // Validación suave: nos aseguramos de que queden números al final
+      if (![payload.deposito.low, payload.deposito.high,
+            payload.ventanilla.low, payload.ventanilla.high,
+            payload.otros, payload.apolonio].every(Number.isFinite)) {
+        return { error: 'Falta al menos un valor numérico requerido en el JSON final.' };
       }
       return { data: payload };
     }
@@ -195,13 +218,18 @@
     };
 
     $('logout').onclick = async () => {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+      } finally {
+        // Forzamos limpiar cualquier sesión/residuo del SDK
+        location.reload();
+      }
     };
 
     $('save').onclick = saveRates;
     $('reload').onclick = loadRates;
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
+    supabase.auth.onAuthStateChange(async (_event, session) => {
       const authed = !!session?.user;
       $('signed-out').style.display = authed ? 'none' : 'block';
       $('signed-in').style.display  = authed ? 'block' : 'none';
@@ -218,5 +246,3 @@
   </script>
 </body>
 </html>
-
-
