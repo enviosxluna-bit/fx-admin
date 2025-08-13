@@ -16,11 +16,13 @@
     .right { text-align: right; }
     .error { color: #b00020; margin-top: 8px; }
     .ok { color: #0a7a24; margin-top: 8px; }
+    .hint { font-size: 12px; color: #444; margin-top: 8px; }
+    .disabled { opacity: .6; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <h1>Actualizar tipo de cambio</h1>
-  <p class="muted">Formato: <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
+  <p class="muted">JSON en <code>public.exchange_rates.rates</code> (id=1): <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
 
   <div id="auth" class="card">
     <h2>Acceso</h2>
@@ -41,7 +43,7 @@
     </div>
   </div>
 
-  <div id="form" class="card" style="display:none;">
+  <div id="form" class="card">
     <h2>Valores actuales</h2>
     <div class="row">
       <div>
@@ -80,14 +82,15 @@
       <button id="save">Guardar</button>
       <button id="reload" class="secondary">Recargar</button>
     </div>
-    <div id="save-msg" class=""></div>
+    <div id="save-msg"></div>
     <p class="muted" id="last-updated"></p>
+    <p id="save-hint" class="hint"></p>
   </div>
 
   <script type="module">
     import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-    // 👇 Usa tus credenciales (las mismas que probaste)
+    // 🔧 Tus credenciales
     const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
 
@@ -95,6 +98,7 @@
 
     const $ = (id) => document.getElementById(id);
     const setMsg = (txt, cls="") => { const el=$('save-msg'); el.className=cls; el.textContent=txt; };
+    const setHint = (txt) => { $('save-hint').textContent = txt || ""; };
 
     const fields = {
       ventanilla_low: $('ventanilla_low'),
@@ -105,47 +109,49 @@
       apolonio: $('apolonio'),
     };
 
-    // Mantener en memoria el JSON actual para MERGE
     let currentData = null;
+    let isAuthed = false;
 
-    // === LECTURA ===
+    // === LECTURA: SIEMPRE (con o sin sesión) ===
     async function loadRates() {
       setMsg("Cargando…");
-      const { data, error } = await supabase
-        .from('exchange_rates')
-        .select('rates, updated_at')
-        .eq('id', 1)
-        .single();
+      try {
+        const { data, error } = await supabase
+          .from('exchange_rates')
+          .select('rates, updated_at')
+          .eq('id', 1)
+          .single();
 
-      if (error) { setMsg('Error cargando: ' + error.message, 'error'); return; }
+        if (error) { setMsg('Error cargando: ' + error.message, 'error'); return; }
 
-      currentData = data?.rates || {};
-      // Prefill
-      fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
-      fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
-      fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
-      fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
-      fields.otros.value           = currentData?.otros            ?? '';
-      fields.apolonio.value        = currentData?.apolonio         ?? '';
-      $('last-updated').textContent =
-        data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
-      setMsg('');
+        currentData = data?.rates || {};
+        fields.ventanilla_low.value  = currentData?.ventanilla?.low  ?? '';
+        fields.ventanilla_high.value = currentData?.ventanilla?.high ?? '';
+        fields.deposito_low.value    = currentData?.deposito?.low    ?? '';
+        fields.deposito_high.value   = currentData?.deposito?.high   ?? '';
+        fields.otros.value           = currentData?.otros            ?? '';
+        fields.apolonio.value        = currentData?.apolonio         ?? '';
+
+        $('last-updated').textContent =
+          data?.updated_at ? `Última actualización: ${new Date(data.updated_at).toLocaleString()}` : '';
+        setMsg('');
+      } catch (e) {
+        setMsg('Error de red: ' + e.message, 'error');
+      }
     }
 
-    // === Construcción MERGE (no pisa con null) ===
+    // === MERGE: no pisa con null ===
     const toNumOr = (val, fallback) => {
       if (val === '' || val === null || val === undefined) return fallback;
       const n = Number(val);
       return Number.isFinite(n) ? n : fallback;
     };
-
     function buildMergedJson() {
       const base = currentData || {
         otros: null, apolonio: null,
         deposito: { low: null, high: null },
         ventanilla: { low: null, high: null }
       };
-
       const merged = {
         otros:     toNumOr(fields.otros.value, base.otros),
         apolonio:  toNumOr(fields.apolonio.value, base.apolonio),
@@ -158,19 +164,15 @@
           high: toNumOr(fields.ventanilla_high.value, base?.ventanilla?.high),
         },
       };
-
-      // Validación final: todo debe ser número
-      const all = [
-        merged.otros, merged.apolonio,
-        merged.deposito.low, merged.deposito.high,
-        merged.ventanilla.low, merged.ventanilla.high
-      ];
+      const all = [merged.otros, merged.apolonio, merged.deposito.low, merged.deposito.high, merged.ventanilla.low, merged.ventanilla.high];
       if (!all.every(Number.isFinite)) return { error: 'Hay valores vacíos o no numéricos.' };
       return { data: merged };
     }
 
-    // === ESCRITURA ===
+    // === ESCRITURA: sólo si hay sesión ===
     async function saveRates() {
+      if (!isAuthed) { setMsg('Inicia sesión para guardar.', 'error'); return; }
+
       const built = buildMergedJson();
       if (built.error) { setMsg(built.error, 'error'); return; }
 
@@ -187,21 +189,19 @@
       else { setMsg('¡Actualizado correctamente!', 'ok'); await loadRates(); }
     }
 
-    // === Auth ===
+    // === Auth UI ===
     $('login').onclick = async () => {
       const email = $('email').value.trim();
       const password = $('password').value;
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) $('auth-msg').textContent = error.message;
     };
-
     $('signup').onclick = async () => {
       const email = $('email').value.trim();
       const password = $('password').value;
       const { error } = await supabase.auth.signUp({ email, password });
       $('auth-msg').textContent = error ? error.message : 'Revisa tu email para confirmar.';
     };
-
     $('logout').onclick = async () => {
       try { await supabase.auth.signOut(); }
       finally { location.reload(); }
@@ -210,19 +210,34 @@
     $('save').onclick = saveRates;
     $('reload').onclick = loadRates;
 
+    // Estado visual del botón "Guardar"
+    function updateSaveEnabled() {
+      if (isAuthed) {
+        $('save').classList.remove('disabled');
+      } else {
+        $('save').classList.add('disabled');
+      }
+      setHint(isAuthed ? '' : 'Puedes ver los valores sin iniciar sesión. Para GUARDAR, inicia sesión arriba.');
+    }
+
+    // 🔁 Siempre refrescamos lectura al cambiar la sesión
     supabase.auth.onAuthStateChange(async (_event, session) => {
-      const authed = !!session?.user;
-      $('signed-out').style.display = authed ? 'none' : 'block';
-      $('signed-in').style.display  = authed ? 'block' : 'none';
-      $('form').style.display       = authed ? 'block' : 'none';
+      isAuthed = !!session?.user;
+      $('signed-out').style.display = isAuthed ? 'none' : 'block';
+      $('signed-in').style.display  = isAuthed ? 'block' : 'none';
       $('user-email').textContent   = session?.user?.email ?? '';
-      if (authed) await loadRates();
+      updateSaveEnabled();
+      await loadRates(); // <- lee SIEMPRE
     });
 
+    // Primer render: leer SIN depender de la sesión
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) await loadRates();
+      updateSaveEnabled();
+      await loadRates();
     })();
+
+    // Mostrar errores JS en la página
+    window.onerror = (msg) => setMsg('Error: ' + msg, 'error');
   </script>
 </body>
 </html>
