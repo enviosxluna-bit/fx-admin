@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Actualizar Tipo de Cambio</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 720px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    label { display:block; font-weight: 600; margin-top: 8px; }
+    input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; font-size: 16px; }
+    button { padding: 10px 14px; border: 1px solid #333; background: #111; color: #fff; border-radius: 6px; cursor: pointer; }
+    button.secondary { background: #fff; color: #111; margin-left: 8px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .muted { color:#666; font-size: 12px; }
+    .right { text-align: right; }
+    .error { color: #b00020; margin-top: 8px; }
+    .ok { color: #0a7a24; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Actualizar tipo de cambio</h1>
+  <p class="muted">Formato fijo: <code>{ otros, apolonio, deposito {low, high}, ventanilla {low, high} }</code></p>
+
+  <div id="auth" class="card">
+    <h2>Acceso</h2>
+    <div id="signed-out">
+      <label>Email</label>
+      <input id="email" type="email" placeholder="admin@tudominio.com" />
+      <label>Contraseña</label>
+      <input id="password" type="password" placeholder="••••••••" />
+      <div style="margin-top:12px;">
+        <button id="login">Iniciar sesión</button>
+        <button id="signup" class="secondary">Crear usuario</button>
+      </div>
+      <div id="auth-msg" class="error"></div>
+    </div>
+    <div id="signed-in" style="display:none;">
+      <div>Sesión iniciada: <span id="user-email"></span></div>
+      <div class="right"><button id="logout" class="secondary">Cerrar sesión</button></div>
+    </div>
+  </div>
+
+  <div id="form" class="card" style="display:none;">
+    <h2>Valores actuales</h2>
+    <div class="row">
+      <div>
+        <label>Ventanilla low (hasta 800)</label>
+        <input id="ventanilla_low" type="number" step="0.01" />
+      </div>
+      <div>
+        <label>Ventanilla high (801+)</label>
+        <input id="ventanilla_high" type="number" step="0.01" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Depósito low</label>
+        <input id="deposito_low" type="number" step="0.01" />
+      </div>
+      <div>
+        <label>Depósito high</label>
+        <input id="deposito_high" type="number" step="0.01" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Otros</label>
+        <input id="otros" type="number" step="0.01" />
+      </div>
+      <div>
+        <label>Apolonio</label>
+        <input id="apolonio" type="number" step="0.01" />
+      </div>
+    </div>
+
+    <div style="margin-top:16px;">
+      <button id="save">Guardar</button>
+      <button id="reload" class="secondary">Recargar</button>
+    </div>
+    <div id="save-msg" class=""></div>
+    <p class="muted" id="last-updated"></p>
+  </div>
+
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+    // 🔧 Reemplaza con tus valores
+    const SUPABASE_URL = "https://doishmxydgslswzhtlpi.supabase.co";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRvaXNobXh5ZGdzbHN3emh0bHBpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTIxNzMyNjcsImV4cCI6MjA2Nzc0OTI2N30.8ozjig0LVvZdif9VuoEkqDcqbA89yliFArPOGcTUz5E";
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const $ = (id) => document.getElementById(id);
+    const fields = {
+      ventanilla_low: $('ventanilla_low'),
+      ventanilla_high: $('ventanilla_high'),
+      deposito_low: $('deposito_low'),
+      deposito_high: $('deposito_high'),
+      otros: $('otros'),
+      apolonio: $('apolonio'),
+    };
+
+    async function loadRates() {
+      const { data, error } = await supabase
+        .from('rates_current')
+        .select('data, updated_at, updated_by')
+        .eq('id', 'current')
+        .single();
+      if (error) {
+        $('save-msg').className = 'error';
+        $('save-msg').textContent = 'Error cargando datos: ' + error.message;
+        return;
+      }
+      const d = data.data || {};
+      fields.ventanilla_low.value  = d?.ventanilla?.low  ?? '';
+      fields.ventanilla_high.value = d?.ventanilla?.high ?? '';
+      fields.deposito_low.value    = d?.deposito?.low    ?? '';
+      fields.deposito_high.value   = d?.deposito?.high   ?? '';
+      fields.otros.value           = d?.otros            ?? '';
+      fields.apolonio.value        = d?.apolonio         ?? '';
+
+      $('last-updated').textContent = `Última actualización: ${new Date(data.updated_at).toLocaleString()}`;
+      $('save-msg').textContent = '';
+      $('save-msg').className = '';
+    }
+
+    function buildJson() {
+      // Mantener EXACTO el formato requerido
+      const toNum = (v) => v === '' || v === null ? null : Number(v);
+      const payload = {
+        otros:     toNum(fields.otros.value),
+        apolonio:  toNum(fields.apolonio.value),
+        deposito:  { low: toNum(fields.deposito_low.value),  high: toNum(fields.deposito_high.value) },
+        ventanilla:{ low: toNum(fields.ventanilla_low.value),high: toNum(fields.ventanilla_high.value) },
+      };
+      // Validaciones simples
+      for (const [k,v] of Object.entries(payload)) {
+        if (k === 'deposito' || k === 'ventanilla') {
+          if (v.low == null || v.high == null) return { error:'Faltan valores en ' + k };
+        } else {
+          if (v == null) return { error:'Falta valor en ' + k };
+        }
+      }
+      return { data: payload };
+    }
+
+    async function saveRates() {
+      const built = buildJson();
+      if (built.error) {
+        $('save-msg').className = 'error';
+        $('save-msg').textContent = built.error;
+        return;
+      }
+      const payload = built.data;
+
+      const user = (await supabase.auth.getUser()).data.user;
+      const updated_by = user?.id ?? null;
+
+      // Escribe historial primero
+      const { error: histErr } = await supabase
+        .from('rates_history')
+        .insert({ data: payload, updated_by });
+
+      if (histErr) {
+        $('save-msg').className = 'error';
+        $('save-msg').textContent = 'Error salvando historial: ' + histErr.message;
+        return;
+      }
+
+      // Upsert al registro singleton
+      const { error } = await supabase
+        .from('rates_current')
+        .upsert({ id: 'current', data: payload, updated_by });
+
+      if (error) {
+        $('save-msg').className = 'error';
+        $('save-msg').textContent = 'Error guardando: ' + error.message;
+      } else {
+        $('save-msg').className = 'ok';
+        $('save-msg').textContent = '¡Actualizado correctamente!';
+        await loadRates();
+      }
+    }
+
+    // --- Auth UI ---
+    $('login').onclick = async () => {
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) $('auth-msg').textContent = error.message;
+    };
+
+    $('signup').onclick = async () => {
+      const email = $('email').value.trim();
+      const password = $('password').value;
+      const { error } = await supabase.auth.signUp({ email, password });
+      $('auth-msg').textContent = error ? error.message : 'Revisa tu email para confirmar.';
+    };
+
+    $('logout').onclick = async () => {
+      await supabase.auth.signOut();
+    };
+
+    $('save').onclick = saveRates;
+    $('reload').onclick = loadRates;
+
+    supabase.auth.onAuthStateChange(async (event, session) => {
+      const authed = !!session?.user;
+      $('signed-out').style.display = authed ? 'none' : 'block';
+      $('signed-in').style.display  = authed ? 'block' : 'none';
+      $('form').style.display       = authed ? 'block' : 'none';
+      $('user-email').textContent   = session?.user?.email ?? '';
+      if (authed) await loadRates();
+    });
+
+    // Intenta cargar por si ya hay sesión
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) await loadRates();
+    })();
+  </script>
+</body>
+</html>
